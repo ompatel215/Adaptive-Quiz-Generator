@@ -1,43 +1,46 @@
-# Extract text from pdf
-import fitz
+# Extract and chunk PDF text page-by-page
 
-# Opens pdf and extracts all text and joins it together into one string
-def extract_text(pdf_bytes: bytes) -> str:
+import fitz
+import re
+
+
+def extract_pages(pdf_bytes):
+    # Return one cleaned text string per non-blank page.
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = []
     for page in doc:
         text = page.get_text()
-        if text.strip():
-            pages.append(text)
+        cleaned = re.sub(r"\n{3,}", "\n\n", text).strip()
+        if len(cleaned) > 40:   # skip blank / image-only pages
+            pages.append(cleaned)
     doc.close()
-    return "\n\n".join(pages)
+    return pages
 
-# Splits data into overlapping chunks of 1000 characters and stores them in a dictionary so its easier to retrieve
-def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[dict]:
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+
+def chunk_pages(pages, target_size=800):
+    # Group consecutive pages into ~target_size-char chunks.
+    # Slide pages are short so several merge; dense textbook pages fill a chunk alone.
     chunks = []
-    current_chunk = ""
+    current = ""
     chunk_id = 0
 
-    for para in paragraphs:
-        if len(current_chunk) + len(para) > chunk_size and current_chunk:
-            chunks.append({"id": chunk_id, "text": current_chunk.strip()})
+    for page in pages:
+        if current and len(current) + len(page) > target_size:
+            chunks.append({"id": chunk_id, "text": current.strip()})
             chunk_id += 1
-            # Keep overlap from end of previous chunk
-            words = current_chunk.split()
-            overlap_words = words[-overlap // 5 :] if len(words) > overlap // 5 else words
-            current_chunk = " ".join(overlap_words) + "\n\n" + para
+            current = page
         else:
-            current_chunk = current_chunk + "\n\n" + para if current_chunk else para
+            current = current + "\n\n" + page if current else page
 
-    if current_chunk.strip():
-        chunks.append({"id": chunk_id, "text": current_chunk.strip()})
+    if current.strip():
+        chunks.append({"id": chunk_id, "text": current.strip()})
 
     return chunks
 
-# Main function that will return chunks if the pdf has readable data
-def parse_pdf(pdf_bytes: bytes, chunk_size: int = 1000) -> list[dict]:
-    text = extract_text(pdf_bytes)
-    if not text.strip():
+
+def parse_pdf(pdf_bytes):
+    # Parse raw PDF bytes and return a list of text chunks.
+    pages = extract_pages(pdf_bytes)
+    if not pages:
         return []
-    return chunk_text(text, chunk_size=chunk_size)
+    return chunk_pages(pages)
